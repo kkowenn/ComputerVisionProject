@@ -30,21 +30,6 @@ def overlay_image_alpha(img, img_overlay, pos, alpha_mask):
 
     img_crop[:] = alpha * img_overlay_crop + alpha_inv * img_crop
 
-# Function to color the arm region
-def color_arm_region(frame, start_point, end_point, target_color, new_color):
-    # Create a mask based on color matching
-    mask = cv.inRange(frame, np.array(target_color) - 20, np.array(target_color) + 20)
-
-    # Define the line connecting the wrist and elbow
-    arm_line = np.zeros_like(frame)
-    cv.line(arm_line, start_point, end_point, (255, 255, 255), thickness=20)
-
-    # Combine the mask with the arm line
-    arm_mask = cv.bitwise_and(mask, arm_line[:, :, 0])
-
-    # Apply the new color to the detected arm region
-    frame[arm_mask > 0] = new_color
-
 # Function to detect pose and overlay image
 def poseDetector(frame, overlay_img):
     # Convert the image to RGB as MediaPipe expects RGB images
@@ -67,27 +52,23 @@ def poseDetector(frame, overlay_img):
         right_elbow_coord = (int(right_elbow.x * w), int(right_elbow.y * h))
         left_elbow_coord = (int(left_elbow.x * w), int(left_elbow.y * h))
 
-        # Color the right arm region
-        target_color = [200, 160, 140]  # Example skin tone color to match
-        new_color = [0, 255, 0]  # Example color to apply (green)
-        color_arm_region(frame, right_wrist_coord, right_elbow_coord, target_color, new_color)
-
-        # Color the left arm region if needed
-        color_arm_region(frame, left_wrist_coord, left_elbow_coord, target_color, new_color)
-
-        # Continue with the overlay image if needed
+        # Calculate the length of the hand region (between wrist and middle of elbow)
         right_hand_length = int(np.sqrt((right_wrist_coord[0] - right_elbow_coord[0])**2 + (right_wrist_coord[1] - right_elbow_coord[1])**2) * 0.5)
         left_hand_length = int(np.sqrt((left_wrist_coord[0] - left_elbow_coord[0])**2 + (left_wrist_coord[1] - left_elbow_coord[1])**2) * 0.5)
 
+        # Resize overlay image to fit the hand length
         right_overlay_resized = cv.resize(overlay_img, (right_hand_length, right_hand_length))
         left_overlay_resized = cv.resize(overlay_img, (left_hand_length, left_hand_length))
 
+        # Adjust position to overlay the image at the wrist
         right_position = (int(right_wrist_coord[0] - right_hand_length / 2), int(right_wrist_coord[1] - right_hand_length / 2))
         left_position = (int(left_wrist_coord[0] - left_hand_length / 2), int(left_wrist_coord[1] - left_hand_length / 2))
 
+        # Overlay the image on the right hand
         alpha_mask = right_overlay_resized[:, :, 3] / 255.0
         overlay_image_alpha(frame, right_overlay_resized[:, :, :3], right_position, alpha_mask)
 
+        # Repeat for the left hand if needed
         alpha_mask = left_overlay_resized[:, :, 3] / 255.0
         overlay_image_alpha(frame, left_overlay_resized[:, :, :3], left_position, alpha_mask)
 
@@ -109,11 +90,11 @@ if input is None:
 output = poseDetector(input, overlay_img)
 
 # Save the output image
-output_img_path = "output_with_colored_arm.jpg"
+output_img_path = "output_with_overlay1.jpg"
 cv.imwrite(output_img_path, output)
 print(f"Output saved to {output_img_path}")
 
 # Display the output image
-cv.imshow('Pose Detection with Colored Arm', output)
+cv.imshow('Pose Detection with Overlay', output)
 cv.waitKey(0)  # Wait for a key press to close the image window
 cv.destroyAllWindows()
