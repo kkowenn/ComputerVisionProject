@@ -6,17 +6,25 @@ import mediapipe as mp
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 
-# Function to overlay the image
-def overlay_image_alpha(img, img_overlay, pos, alpha_mask):
+# Function to overlay the image with rotation following arm direction
+def overlay_image_alpha_rotated(img, img_overlay, pos, alpha_mask, angle):
     x, y = pos
 
+    # Rotate the overlay image
+    img_overlay_rotated = rotate_image(img_overlay, angle)
+    alpha_mask_rotated = rotate_image(alpha_mask, angle)
+
+    # Calculate the new position after rotation
+    h, w = img_overlay_rotated.shape[:2]
+    new_pos = (x - w // 2, y - h // 2)
+
     # Image ranges
-    y1, y2 = max(0, y), min(img.shape[0], y + img_overlay.shape[0])
-    x1, x2 = max(0, x), min(img.shape[1], x + img_overlay.shape[1])
+    y1, y2 = max(0, new_pos[1]), min(img.shape[0], new_pos[1] + h)
+    x1, x2 = max(0, new_pos[0]), min(img.shape[1], new_pos[0] + w)
 
     # Overlay ranges
-    y1o, y2o = max(0, -y), min(img_overlay.shape[0], img.shape[0] - y)
-    x1o, x2o = max(0, -x), min(img_overlay.shape[1], img.shape[1] - x)
+    y1o, y2o = max(0, -new_pos[1]), min(h, img.shape[0] - new_pos[1])
+    x1o, x2o = max(0, -new_pos[0]), min(w, img.shape[1] - new_pos[0])
 
     # Exit if nothing to overlay
     if y1 >= y2 or x1 >= x2 or y1o >= y2o or x1o >= x2o:
@@ -24,13 +32,21 @@ def overlay_image_alpha(img, img_overlay, pos, alpha_mask):
 
     # Blend overlay within the determined ranges
     img_crop = img[y1:y2, x1:x2]
-    img_overlay_crop = img_overlay[y1o:y2o, x1o:x2o]
-    alpha = alpha_mask[y1o:y2o, x1o:x2o, np.newaxis]
+    img_overlay_crop = img_overlay_rotated[y1o:y2o, x1o:x2o]
+    alpha = alpha_mask_rotated[y1o:y2o, x1o:x2o, np.newaxis]
     alpha_inv = 1.0 - alpha
 
     img_crop[:] = alpha * img_overlay_crop + alpha_inv * img_crop
 
-# Function to detect pose and overlay image
+# Function to rotate an image around its center
+def rotate_image(image, angle):
+    h, w = image.shape[:2]
+    center = (w // 2, h // 2)
+    rot_matrix = cv.getRotationMatrix2D(center, angle, 1.0)
+    rotated_image = cv.warpAffine(image, rot_matrix, (w, h), flags=cv.INTER_LINEAR)
+    return rotated_image
+
+# Function to detect pose and overlay image following arm direction
 def poseDetector(frame, overlay_img):
     # Convert the image to RGB as MediaPipe expects RGB images
     frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
@@ -52,25 +68,29 @@ def poseDetector(frame, overlay_img):
         right_elbow_coord = (int(right_elbow.x * w), int(right_elbow.y * h))
         left_elbow_coord = (int(left_elbow.x * w), int(left_elbow.y * h))
 
-        # Calculate the length of the hand region (between wrist and middle of elbow)
+        # Calculate the length of the hand region (between wrist and elbow)
         right_hand_length = int(np.sqrt((right_wrist_coord[0] - right_elbow_coord[0])**2 + (right_wrist_coord[1] - right_elbow_coord[1])**2) * 0.5)
         left_hand_length = int(np.sqrt((left_wrist_coord[0] - left_elbow_coord[0])**2 + (left_wrist_coord[1] - left_elbow_coord[1])**2) * 0.5)
+
+        # Calculate the angle of the hand for rotation
+        right_angle = np.degrees(np.arctan2(right_wrist_coord[1] - right_elbow_coord[1], right_wrist_coord[0] - right_elbow_coord[0]))
+        left_angle = np.degrees(np.arctan2(left_wrist_coord[1] - left_elbow_coord[1], left_wrist_coord[0] - left_elbow_coord[0]))
 
         # Resize overlay image to fit the hand length
         right_overlay_resized = cv.resize(overlay_img, (right_hand_length, right_hand_length))
         left_overlay_resized = cv.resize(overlay_img, (left_hand_length, left_hand_length))
 
         # Adjust position to overlay the image at the wrist
-        right_position = (int(right_wrist_coord[0] - right_hand_length / 2), int(right_wrist_coord[1] - right_hand_length / 2))
-        left_position = (int(left_wrist_coord[0] - left_hand_length / 2), int(left_wrist_coord[1] - left_hand_length / 2))
+        right_position = right_wrist_coord
+        left_position = left_wrist_coord
 
-        # Overlay the image on the right hand
+        # Overlay the image on the right hand with rotation following the arm direction
         alpha_mask = right_overlay_resized[:, :, 3] / 255.0
-        overlay_image_alpha(frame, right_overlay_resized[:, :, :3], right_position, alpha_mask)
+        overlay_image_alpha_rotated(frame, right_overlay_resized[:, :, :3], right_position, alpha_mask, right_angle)
 
-        # Repeat for the left hand
+        # Repeat for the left hand with rotation following the arm direction
         alpha_mask = left_overlay_resized[:, :, 3] / 255.0
-        overlay_image_alpha(frame, left_overlay_resized[:, :, :3], left_position, alpha_mask)
+        overlay_image_alpha_rotated(frame, left_overlay_resized[:, :, :3], left_position, alpha_mask, left_angle)
 
     return frame
 
@@ -81,7 +101,7 @@ if overlay_img is None:
     raise FileNotFoundError(f"Overlay image not found at path: {overlay_img_path}")
 
 # Load input image
-input_img_path = "body1.JPG"
+input_img_path = "body8.JPG"
 input = cv.imread(input_img_path)
 if input is None:
     raise FileNotFoundError(f"Input image not found at path: {input_img_path}")
@@ -90,7 +110,7 @@ if input is None:
 output = poseDetector(input, overlay_img)
 
 # Save the output image
-output_img_path = "output_with_overlay1.jpg"
+output_img_path = "output_with_overlay_rotated8.jpg"
 cv.imwrite(output_img_path, output)
 print(f"Output saved to {output_img_path}")
 
